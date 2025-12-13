@@ -302,9 +302,12 @@ for (const card of cards) {
 ```
 packages/tests/
 ├── e2e/
-│   ├── smoke-tests.spec.ts           # Your link crawler idea
-│   ├── homepage-buttons.spec.ts      # Generic button tests ✅
-│   └── homepage.spec.ts              # Example (failed - too specific)
+│   ├── smoke/
+│   │   └── critical-pages.spec.ts    # Site-wide smoke tests ✅
+│   ├── homepage/
+│   │   └── buttons.spec.ts           # Homepage button tests ✅
+│   ├── _examples/
+│   │   └── (old failed examples)
 ├── debug/
 │   └── inspect-homepage.spec.ts      # Debug test to inspect DOM ✅
 ├── page-objects/
@@ -325,6 +328,45 @@ packages/tests/
 
 ---
 
+### **Test Organization Strategy**
+
+**CRITICAL LESSON:** Separate smoke tests from page-specific tests!
+
+**Smoke Tests** (`e2e/smoke/`) - Site-wide validation:
+- ✅ Test ALL critical pages (/, /compact, /academy, /blog, /develop, /learn)
+- ✅ Fast execution (< 30 seconds)
+- ✅ Shallow assertions (200 status, has content, no 404)
+- ✅ Run on every deploy
+- ❌ Do NOT test specific buttons or features
+
+**Page-Specific Tests** (`e2e/homepage/`, `e2e/blog/`, etc.) - Deep feature testing:
+- ✅ Test specific components (buttons, forms, cards)
+- ✅ Use wildcard selectors for CSS modules: `[class*="primaryBtn"]`
+- ✅ Test external links for HTTP status
+- ✅ Assert preconditions (fail if 0 elements found)
+- ❌ Do NOT duplicate smoke test coverage
+
+**Why This Matters:**
+- **Avoids Duplication** - Smoke tests don't repeat page-specific tests
+- **Clear Purpose** - Each test file has a single responsibility
+- **Fast Feedback** - Smoke tests run first, fail fast if site is broken
+- **Maintainability** - Easy to find and update tests
+
+**Example Structure:**
+```
+e2e/
+├── smoke/
+│   └── critical-pages.spec.ts     # Tests ALL pages site-wide
+├── homepage/
+│   └── buttons.spec.ts            # Tests homepage buttons in detail
+├── blog/
+│   └── [future tests]             # Tests blog features
+└── academy/
+    └── [future tests]             # Tests academy features
+```
+
+---
+
 ### **Best Practices We Followed**
 
 ✅ **Test Independence** - Each test can run alone
@@ -334,6 +376,7 @@ packages/tests/
 ✅ **Parallel Execution** - 6 browser configs
 ✅ **Rich Reporting** - HTML, JSON, JUnit
 ✅ **Smoke Testing** - Fast, broad coverage
+✅ **Test Organization** - Smoke tests separate from page-specific tests
 
 ---
 

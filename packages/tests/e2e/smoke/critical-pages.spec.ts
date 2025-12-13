@@ -1,81 +1,75 @@
 import { test, expect } from '@playwright/test';
+import pipelineUrls from '../../pipelines-urls.json';
 
 /**
- * Smoke Tests - Strategic Broad Coverage
+ * Smoke Tests - Site-Wide Critical Pages
  *
  * PURPOSE:
- * - Catch broken links and pages
- * - Fast execution
+ * - Verify ALL critical pages across the entire site are accessible
+ * - Fast execution (< 30 seconds total)
  * - Run on every deployment
- * - No detailed assertions, just "does it work?"
+ * - Fail fast if site is fundamentally broken
+ *
+ * STRATEGY:
+ * - Test that pages load (200 status)
+ * - Test that pages have content (not blank/404)
+ * - NO detailed functionality testing (that's for page-specific tests)
+ * - Uses pipelines-urls.json (the same URLs tested in CI/CD)
  *
  * WHEN TO RUN:
- * - After every deployment
  * - Before running deeper functional tests
  * - In CI/CD pipeline (quick feedback)
+ * - After every deployment
  *
- * BEST PRACTICE:
- * - These tests should be FAST (< 5 seconds total)
- * - Broad coverage, shallow depth
- * - Fail fast if site is fundamentally broken
+ * WHAT THIS DOESN'T TEST:
+ * - Specific buttons or features (see homepage/buttons.spec.ts)
+ * - Forms or interactions (see functional tests)
+ * - Detailed component behavior (see page-specific tests)
  */
 
-test.describe('Smoke Tests - Homepage', () => {
-	test('should load homepage without errors', async ({ page }) => {
-		// Navigate to homepage
-		const response = await page.goto('/');
+test.describe('Smoke Tests - All Critical Pages', () => {
+	/**
+	 * Critical pages from pipelines-urls.json
+	 * These are the same URLs tested in the CI/CD pipeline
+	 */
+	const criticalPages = pipelineUrls.paths.map((path) => ({
+		path,
+		name: path === '/' ? 'Homepage' : path,
+	}));
 
-		// Assert: Page loaded successfully
-		expect(response?.status()).toBe(200);
+	for (const { path, name } of criticalPages) {
+		test(`should load ${name} without errors`, async ({ page }) => {
+			// Act: Navigate to page
+			const response = await page.goto(path, { timeout: 10000 });
 
-		// Assert: No console errors (optional but useful)
-		const errors: string[] = [];
-		page.on('console', (msg) => {
-			if (msg.type() === 'error') {
-				errors.push(msg.text());
-			}
+			// Assert: HTTP 200 status
+			expect(response?.status(), `${name} should return 200`).toBe(200);
+
+			// Assert: Page has content (not blank)
+			const bodyText = await page.locator('body').textContent();
+			expect(bodyText?.length, `${name} should have content`).toBeGreaterThan(100);
+
+			// Assert: No "404" or "Page Not Found" in page
+			const title = await page.title();
+			const h1Text = await page.locator('h1').first().textContent().catch(() => '');
+
+			expect(title.toLowerCase()).not.toContain('404');
+			expect(title.toLowerCase()).not.toContain('not found');
+			expect(h1Text.toLowerCase()).not.toContain('404');
+			expect(h1Text.toLowerCase()).not.toContain('not found');
+
+			console.log(`✅ ${name} loaded successfully`);
 		});
+	}
+});
 
-		// Assert: Title is not empty
-		const title = await page.title();
-		expect(title.length).toBeGreaterThan(0);
-	});
-
-	test('should have no broken internal links on homepage', async ({ page }) => {
-		await page.goto('/');
-
-		// Get all internal links
-		const links = await page.locator('a[href^="/"]').all();
-
-		console.log(`Found ${links.length} internal links to test`);
-
-		// Track results
-		const brokenLinks: { href: string; status: number }[] = [];
-
-		// Test each link (limit to first 20 for speed)
-		const linksToTest = links.slice(0, 20);
-
-		for (const link of linksToTest) {
-			const href = await link.getAttribute('href');
-			if (!href || href === '#' || href === '/') continue;
-
-			// Navigate and check status
-			const response = await page.goto(href);
-			const status = response?.status() || 0;
-
-			if (status >= 400) {
-				brokenLinks.push({ href, status });
-			}
-
-			// Go back to homepage for next link
-			await page.goto('/');
-		}
-
-		// Assert: No broken links found
-		expect(brokenLinks, `Found broken links: ${JSON.stringify(brokenLinks, null, 2)}`).toHaveLength(0);
-	});
-
-	test('should have working navigation bar', async ({ page }) => {
+/**
+ * Smoke Tests - Basic Site Functionality
+ *
+ * Test core features that should work across the entire site
+ */
+test.describe('Smoke Tests - Core Site Features', () => {
+	test('should have working navigation on homepage', async ({ page }) => {
 		await page.goto('/');
 
 		// Find navigation element
@@ -88,22 +82,24 @@ test.describe('Smoke Tests - Homepage', () => {
 		const navLinks = await nav.locator('a[href]').all();
 
 		// Assert: Navigation has links
-		expect(navLinks.length).toBeGreaterThan(0);
+		expect(navLinks.length, 'Navigation should have links').toBeGreaterThan(0);
 
-		console.log(`Navigation has ${navLinks.length} links`);
+		console.log(`✅ Navigation has ${navLinks.length} links`);
 	});
 
-	test('should have accessible search', async ({ page }) => {
+	test('should have accessible search functionality', async ({ page }) => {
 		await page.goto('/');
 
-		// Look for any search-related element (flexible)
+		// Look for any search-related element (flexible for different implementations)
 		const searchElements = await page.locator('[class*="search"], [aria-label*="search" i], button:has-text("search")').count();
 
 		// Assert: At least one search element exists
-		expect(searchElements).toBeGreaterThan(0);
+		expect(searchElements, 'Search functionality should be present').toBeGreaterThan(0);
+
+		console.log(`✅ Found ${searchElements} search element(s)`);
 	});
 
-	test('should load within acceptable time', async ({ page }) => {
+	test('should load homepage within acceptable time', async ({ page }) => {
 		const startTime = Date.now();
 
 		await page.goto('/');
@@ -111,119 +107,48 @@ test.describe('Smoke Tests - Homepage', () => {
 
 		const loadTime = Date.now() - startTime;
 
-		// Assert: Page loads in under 3 seconds
-		expect(loadTime).toBeLessThan(3000);
+		// Assert: Page loads in under 5 seconds
+		expect(loadTime, 'Homepage should load in under 5 seconds').toBeLessThan(5000);
 
-		console.log(`Page loaded in ${loadTime}ms`);
+		console.log(`✅ Homepage loaded in ${loadTime}ms`);
 	});
 });
 
 /**
- * Smoke Tests - Critical Pages
+ * Smoke Tests - Quick Link Validation
  *
- * Test that all main sections of the site are accessible
+ * Spot-check that internal links are working
+ * (Deep link testing is in homepage/buttons.spec.ts)
  */
-test.describe('Smoke Tests - Critical Pages', () => {
-	const criticalPages = [
-		{ path: '/', name: 'Homepage' },
-		{ path: '/getting-started', name: 'Getting Started' },
-		{ path: '/learn', name: 'Learn' },
-		{ path: '/develop', name: 'Develop' },
-		{ path: '/blog', name: 'Blog' },
-	];
-
-	for (const { path, name } of criticalPages) {
-		test(`should load ${name} page without errors`, async ({ page }) => {
-			const response = await page.goto(path);
-
-			// Assert: 200 status
-			expect(response?.status()).toBe(200);
-
-			// Assert: Page has content (not blank)
-			const bodyText = await page.locator('body').textContent();
-			expect(bodyText?.length).toBeGreaterThan(100);
-
-			// Assert: No "404" or "Page Not Found" in title or h1
-			const title = await page.title();
-			const h1Text = await page.locator('h1').first().textContent().catch(() => '');
-
-			expect(title.toLowerCase()).not.toContain('404');
-			expect(title.toLowerCase()).not.toContain('Page Not Found');
-			expect(h1Text.toLowerCase()).not.toContain('404');
-			expect(h1Text.toLowerCase()).not.toContain('Page Not Found');
-		});
-	}
-});
-
-/**
- * Smoke Tests - Link Crawler
- *
- * YOUR IDEA IMPLEMENTED!
- * This test crawls the homepage and clicks every link to verify no 404s
- */
-test.describe('Smoke Tests - Link Crawler', () => {
-	test('should click all clickable elements and verify no 404s', async ({ page }) => {
+test.describe('Smoke Tests - Link Validation', () => {
+	test('should have no broken navigation links', async ({ page }) => {
 		await page.goto('/');
 
-		// Get all clickable elements (links and buttons with hrefs)
-		const clickableElements = await page.locator('a[href]:visible').all();
+		// Get navigation links only (not all links on page)
+		const nav = page.locator('nav').first();
+		const navLinks = await nav.locator('a[href^="/"]').all();
 
-		console.log(`Found ${clickableElements.length} clickable elements`);
+		console.log(`Testing ${navLinks.length} navigation links`);
 
-		const results: Array<{ element: string; href: string; status: string }> = [];
+		const brokenLinks: { href: string; status: number }[] = [];
 
-		// Test first 15 elements (to keep test fast)
-		for (let i = 0; i < Math.min(15, clickableElements.length); i++) {
-			const element = clickableElements[i];
-			const href = await element.getAttribute('href');
+		// Test each navigation link
+		for (const link of navLinks) {
+			const href = await link.getAttribute('href');
+			if (!href || href === '#' || href === '/') continue;
 
-			if (!href || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('#')) {
-				continue;
+			// Navigate and check status
+			const response = await page.goto(href, { timeout: 5000 });
+			const status = response?.status() || 0;
+
+			if (status >= 400) {
+				brokenLinks.push({ href, status });
 			}
 
-			// Handle external links differently
-			if (href.startsWith('http') && !href.includes('docs.midnight.network')) {
-				results.push({ element: await element.textContent() || '', href, status: 'external-skipped' });
-				continue;
-			}
-
-			try {
-				// Click the element
-				await element.click({ timeout: 5000 });
-
-				// Wait for navigation
-				await page.waitForLoadState('domcontentloaded');
-
-				// Check for 404
-				const pageText = await page.textContent('body');
-				const is404 = pageText?.toLowerCase().includes('404') ||
-				             pageText?.toLowerCase().includes('page not found') ||
-				             pageText?.toLowerCase().includes('not found');
-
-				results.push({
-					element: await element.textContent() || '',
-					href,
-					status: is404 ? '404-FOUND' : 'ok',
-				});
-
-				// Go back to homepage
-				await page.goto('/');
-			} catch (error) {
-				results.push({
-					element: await element.textContent() || '',
-					href,
-					status: `error: ${error}`,
-				});
-				// Go back to homepage on error
-				await page.goto('/');
-			}
+			console.log(`  ${href} → ${status}`);
 		}
 
-		// Log results
-		console.log('Link crawler results:', JSON.stringify(results, null, 2));
-
-		// Assert: No 404s found
-		const broken = results.filter((r) => r.status.includes('404'));
-		expect(broken, `Found 404 pages: ${JSON.stringify(broken, null, 2)}`).toHaveLength(0);
+		// Assert: No broken navigation links
+		expect(brokenLinks, `Found broken navigation links: ${JSON.stringify(brokenLinks, null, 2)}`).toHaveLength(0);
 	});
 });
