@@ -42,3 +42,5 @@ package-lock.yaml
 .yarn/cache
 .yarn/install-state.gz
 .pnp.*
+packages/tests/visual-regression.test.ts-snapshots/*
+packages/tests/playwright-report/*
