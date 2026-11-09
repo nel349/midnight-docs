@@ -23,7 +23,7 @@ These apply to every procedure in this guide:
 
 - Node.js version 22 or higher installed.
 - Docker installed and running, for the local network and the [proof server](./run-proof-server).
-- [Vitest](https://vitest.dev/) and `@midnight-ntwrk/midnight-js-utils` 5.0.0 installed in your test workspace, for the verification tests.
+- [Vitest](https://vitest.dev/) and `@midnight-ntwrk/midnight-js-utils`, at the Midnight.js version in the [compatibility matrix](../relnotes/support-matrix), installed in your test workspace, for the verification tests.
 
 {/* _mod-docs-content-type: CONCEPT */}
 ## The Midnight networks
@@ -324,11 +324,11 @@ The Midnight Service Desk [Blockfrost migration runbook](https://github.com/midn
 {/* _mod-docs-content-type: PROCEDURE */}
 ## Running a local network
 
-Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. The images are the ledger 9 versions from the [compatibility matrix](../relnotes/support-matrix): node 2.1.101, indexer 4.4.101, and proof server 9.0.0.
+Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. The image tags in the Compose file are the node, indexer, and proof server versions in the [compatibility matrix](../relnotes/support-matrix); when the matrix changes, change the tags to match.
 
 :::note Don't use midnight-local-dev
 
-Earlier versions of this guide used [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). Midnight archived that repository, and its `standalone.yml` still runs ledger 8 images (node 1.0.0, indexer 4.3.3, proof server 8.1.0), which Midnight.js 5 and Wallet SDK 2 don't support. Node `2.1.0-rc.4`, which some example projects still pin, rejects contract calls with `Custom error: 104`.
+Earlier versions of this guide used [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). Midnight archived that repository, and its `standalone.yml` still runs ledger 8 images, which the current Midnight.js and Wallet SDK don't support.
 
 :::
 
@@ -407,7 +407,7 @@ Earlier versions of this guide used [midnight-local-dev](https://github.com/midn
 
    The command pulls the images and returns once the node has produced its first block and the indexer and proof server are healthy, which takes under a minute after the first pull.
 
-3. Fund the wallet you develop with from the genesis wallet, whose seed is `00..01`. The [node toolkit](../nodes/node-toolkit) sends the transactions. Run it on the network's Docker network, `midnight-local_default`, so it reaches the node as `node`. Replace `$WALLET_SEED` with your test wallet's seed:
+3. Fund the wallet you develop with from the genesis wallet, whose seed is `00..01`. The [node toolkit](../nodes/node-toolkit) sends the transactions; use the toolkit tag that matches the node image tag. Run it on the network's Docker network, `midnight-local_default`, so it reaches the node as `node`. Replace `$WALLET_SEED` with your test wallet's seed:
 
    ```bash
    toolkit() { docker run --rm --network midnight-local_default midnightntwrk/midnight-node-toolkit:2.1.101 "$@"; }
@@ -484,7 +484,7 @@ The failure modes you are most likely to hit with the local stack, and their fix
 | Indexer exits on first start with `block number 1 not found` | A startup race on a fresh chain: the indexer asked for a block the node had not produced yet. The Compose file waits for block 1 and restarts the indexer on failure. If it still stops, run `docker compose restart indexer`; it latches on once blocks exist. |
 | `Operation failed: Expected undeployed address, got Preprod address` | The wallet is on the wrong network. In Lace, switch to the Undeployed network under **Settings**, then use that unshielded address. |
 | Containers do not start | Confirm Docker is running, then run `docker compose pull` and `docker compose up -d --wait`, and read `docker compose logs -f <service>` for the failing service. |
-| Contract calls fail with `1010: Invalid Transaction: Custom error: 104` | The node image is older than 2.1.101, for example `2.1.0-rc.4`. Use the images in the Compose file above. |
+| Contract calls fail with `1010: Invalid Transaction: Custom error: 104` | The node image is older than the node version in the [compatibility matrix](../relnotes/support-matrix), for example a release candidate that some example projects still pin. Use the matrix versions, as in the Compose file above. |
 | Wallet sync is slow after startup | The indexer is catching up with the node. Confirm the node produces blocks with `curl http://localhost:9944/health` and watch the indexer logs. |
 
 {/* _mod-docs-content-type: PROCEDURE */}
@@ -522,7 +522,7 @@ Point a DApp at a chosen network by setting the network ID and wiring the matchi
    const network = NETWORKS['preprod']();
    ```
 
-3. Pass the network ID to Midnight.js in the `config` field of your provider set, together with `ttlSeconds`, how long a built transaction stays valid. Midnight.js 5 reads the network ID from `config` whenever it builds a transaction, such as when you deploy a contract with `deployContract` or call a circuit with `callTx`. Midnight.js 5.0.0 removed the `setNetworkId()` function and the `@midnight-ntwrk/midnight-js-network-id` package. Then pass the endpoints to your providers:
+3. Pass the network ID to Midnight.js in the `config` field of your provider set, together with `ttlSeconds`, how long a built transaction stays valid. Midnight.js 5 reads the network ID from `config` whenever it builds a transaction, such as when you deploy a contract with `deployContract` or call a circuit with `callTx`. Midnight.js 5 removed the `setNetworkId()` function and the `@midnight-ntwrk/midnight-js-network-id` package. Then pass the endpoints to your providers:
 
    ```typescript
    import type { MidnightConfig } from '@midnight-ntwrk/midnight-js-types';
