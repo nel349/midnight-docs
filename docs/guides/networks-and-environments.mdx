@@ -324,88 +324,34 @@ The Midnight Service Desk [Blockfrost migration runbook](https://github.com/midn
 {/* _mod-docs-content-type: PROCEDURE */}
 ## Running a local network
 
-Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. The image tags in the Compose file are the node, indexer, and proof server versions in the [compatibility matrix](../relnotes/support-matrix); when the matrix changes, change the tags to match.
+Run a node, an indexer, and a proof server in Docker on your machine with the local network that every example in [midnight-examples](https://github.com/midnightntwrk/midnight-examples) ships. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. Each example's `compose.yml` pins the node, indexer, and proof server versions in the [compatibility matrix](../relnotes/support-matrix).
 
 ### Procedure
 
-1. Save this Compose file as `compose.yml` in an empty directory:
-
-   ```yaml title="compose.yml"
-   name: midnight-local
-
-   services:
-     node:
-       image: 'midnightntwrk/midnight-node:2.1.101'
-       ports:
-         - '127.0.0.1:9944:9944'
-       environment:
-         CFG_PRESET: 'dev'
-         SIDECHAIN_BLOCK_BENEFICIARY: '04bcf7ad3be7a5c790460be82a713af570f22e0f801f6659ab8e84a52be6969e'
-       # Healthy once block 1 exists, so the indexer doesn't start on an empty chain.
-       healthcheck:
-         test:
-           - 'CMD-SHELL'
-           - >-
-             curl -sf -H 'Content-Type: application/json'
-             -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}'
-             http://localhost:9944 | grep -q '"number":"0x[1-9a-f]'
-         interval: 2s
-         timeout: 5s
-         retries: 30
-         start_period: 5s
-
-     indexer:
-       image: 'midnightntwrk/indexer-standalone:4.4.101'
-       restart: on-failure
-       ports:
-         - '127.0.0.1:8088:8088'
-       environment:
-         APP__INFRA__NODE__URL: 'ws://node:9944'
-         APP__APPLICATION__NETWORK_ID: 'undeployed'
-         APP__INFRA__STORAGE__PASSWORD: 'indexer'
-         APP__INFRA__PUB_SUB__PASSWORD: 'indexer'
-         APP__INFRA__LEDGER_STATE_STORAGE__PASSWORD: 'indexer'
-         APP__INFRA__SECRET: '303132333435363738393031323334353637383930313233343536373839303132'
-         APP__INFRA__SPO_NODE__URL: 'ws://node:9944'
-         APP__INFRA__SPO_NODE__BLOCKFROST_ID: 'local-dummy-id'
-       healthcheck:
-         test: ['CMD-SHELL', 'cat /var/run/indexer-standalone/running']
-         interval: 10s
-         timeout: 5s
-         retries: 20
-         start_period: 10s
-       depends_on:
-         node:
-           condition: service_healthy
-
-     proof-server:
-       image: 'midnightntwrk/proof-server:9.0.0'
-       command: ['midnight-proof-server', '-v']
-       ports:
-         - '127.0.0.1:6300:6300'
-       healthcheck:
-         test: ['CMD-SHELL', 'echo > /dev/tcp/127.0.0.1/6300']
-         interval: 10s
-         timeout: 5s
-         retries: 20
-         start_period: 10s
-   ```
-
-   The passwords and the secret only protect the indexer's own storage inside the container. The indexer needs a value for the Blockfrost ID, but the `dev` preset mocks its Cardano connection, so any string works.
-
-2. Start the network from that directory:
+1. Clone midnight-examples and go to an example. Every example starts the same network on the same ports, so any one works:
 
    ```bash
-   docker compose up -d --wait
+   git clone https://github.com/midnightntwrk/midnight-examples.git
+   cd midnight-examples/examples/hello-world
    ```
 
-   The command pulls the images and returns once the node has produced its first block and the indexer and proof server are healthy, which takes under a minute after the first pull.
-
-3. Fund the wallet you develop with from the genesis wallet, whose seed is `00..01`. The [node toolkit](../nodes/node-toolkit) sends the transactions; use the toolkit tag that matches the node image tag. Run it on the network's Docker network, `midnight-local_default`, so it reaches the node as `node`. Replace `$WALLET_SEED` with your test wallet's seed:
+2. Start the network:
 
    ```bash
-   toolkit() { docker run --rm --network midnight-local_default midnightntwrk/midnight-node-toolkit:2.1.101 "$@"; }
+   npm run env:up
+   ```
+
+   The script runs `docker compose up -d --wait`, which pulls the images and returns once the node has produced its first block and the indexer and proof server are healthy.
+
+3. Fund the wallet you develop with from the genesis wallet, whose seed is `00..01`. The [node toolkit](../nodes/node-toolkit) sends the transactions; use the toolkit tag that matches the node image tag in `compose.yml`. Run it on the network's Docker network, which Docker Compose names after the example folder, `hello-world_default`, so it reaches the node as `node`. Replace `$WALLET_SEED` with your test wallet's seed:
+
+   ```bash
+   toolkit() { docker run --rm --network hello-world_default midnightntwrk/midnight-node-toolkit:2.1.101 "$@"; }
    ADDR=$(toolkit show-address --network undeployed --seed $WALLET_SEED --unshielded)
+
+   # The toolkit reads finalized blocks only, and a new chain finalizes its first block
+   # a few seconds after env:up returns.
+   sleep 15
 
    # Send 10,000 tNIGHT (10,000,000,000 STAR) from the genesis wallet.
    toolkit generate-txs -s ws://node:9944 -d ws://node:9944 \
@@ -423,10 +369,10 @@ Run the full Midnight stack, a node, an indexer, and a proof server, in Docker o
 4. Stop the network when you're done:
 
    ```bash
-   docker compose down
+   npm run env:down
    ```
 
-   The chain lives only in the containers. The next `docker compose up` starts a new chain from the same genesis state, so deployed contracts and funded wallets are gone, and the genesis wallet is full again.
+   The chain lives only in the containers. The next `npm run env:up` starts a new chain from the same genesis state, so deployed contracts and funded wallets are gone, and the genesis wallet is full again.
 
 ### Verification
 
@@ -474,11 +420,11 @@ The failure modes you are most likely to hit with the local stack, and their fix
 
 | Symptom | Fix |
 |---|---|
-| `Bind for 127.0.0.1:9944 failed: port is already allocated` | A previous run still holds the port. Run `docker compose down` in the directory with `compose.yml`, or find the holder with `lsof -i :9944`. |
-| Indexer exits on first start with `block number 1 not found` | A startup race on a fresh chain: the indexer asked for a block the node had not produced yet. The Compose file waits for block 1 and restarts the indexer on failure. If it still stops, run `docker compose restart indexer`; it latches on once blocks exist. |
+| `Bind for 127.0.0.1:9944 failed: port is already allocated` | A previous run, possibly from another example, still holds the port. Run `npm run env:down` in that example's folder, or find the holder with `lsof -i :9944`. |
+| Indexer exits on first start with `block number 1 not found` | A startup race on a fresh chain: the indexer asked for a block the node had not produced yet. The example's Compose file waits for block 1 and restarts the indexer on failure. If it still stops, run `docker compose restart indexer` in the example's folder; it latches on once blocks exist. |
 | `Operation failed: Expected undeployed address, got Preprod address` | The wallet is on the wrong network. In Lace, switch to the Undeployed network under **Settings**, then use that unshielded address. |
-| Containers do not start | Confirm Docker is running, then run `docker compose pull` and `docker compose up -d --wait`, and read `docker compose logs -f <service>` for the failing service. |
-| Contract calls fail with `1010: Invalid Transaction: Custom error: 104` | The node image is older than the node version in the [compatibility matrix](../relnotes/support-matrix), for example a release candidate that some example projects still pin. Use the matrix versions, as in the Compose file above. |
+| Containers do not start | Confirm Docker is running, then in the example's folder run `docker compose pull` and `npm run env:up`, and read `docker compose logs -f <service>` for the failing service. |
+| Contract calls fail with `1010: Invalid Transaction: Custom error: 104` | The node image in `compose.yml` is older than the node version in the [compatibility matrix](../relnotes/support-matrix). Update your midnight-examples checkout with `git pull`, then run `npm run env:down` and `npm run env:up`. |
 | Wallet sync is slow after startup | The indexer is catching up with the node. Confirm the node produces blocks with `curl http://localhost:9944/health` and watch the indexer logs. |
 
 {/* _mod-docs-content-type: PROCEDURE */}
