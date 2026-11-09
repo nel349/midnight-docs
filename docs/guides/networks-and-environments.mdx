@@ -326,12 +326,6 @@ The Midnight Service Desk [Blockfrost migration runbook](https://github.com/midn
 
 Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. The image tags in the Compose file are the node, indexer, and proof server versions in the [compatibility matrix](../relnotes/support-matrix); when the matrix changes, change the tags to match.
 
-:::note Don't use midnight-local-dev
-
-Earlier versions of this guide used [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). Midnight archived that repository, and its `standalone.yml` still runs ledger 8 images, which the current Midnight.js and Wallet SDK don't support.
-
-:::
-
 ### Procedure
 
 1. Save this Compose file as `compose.yml` in an empty directory:
