@@ -75,7 +75,7 @@ Blockfrost serves the public indexer and node RPC for `preprod` and `mainnet`, a
 <Tabs groupId="network">
 <TabItem value="undeployed" label="Local (undeployed)">
 
-The local development network, run via [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). All services run in Docker on your machine; set it up in [Running a local network](#running-a-local-network).
+The local development network: a node, an indexer, and a proof server in Docker on your machine; set it up in [Running a local network](#running-a-local-network).
 
 | Service | Value |
 |---|---|
@@ -84,7 +84,7 @@ The local development network, run via [midnight-local-dev](https://github.com/m
 | Indexer (GraphQL) | `http://localhost:8088/api/v4/graphql` |
 | Indexer (WebSocket) | `ws://localhost:8088/api/v4/graphql/ws` |
 | Proof server | `http://localhost:6300` |
-| Faucet | None. The genesis wallet is pre-funded and the funding menu transfers 50,000 tNIGHT per account. |
+| Faucet | None. The genesis wallet, seed `00..01`, is pre-funded; send tNIGHT from it with the node toolkit. |
 | Address prefixes | `mn_addr_undeployed`, `mn_shield-addr_undeployed`, `mn_dust_undeployed` |
 | Block explorers | None |
 
@@ -324,48 +324,119 @@ The Midnight Service Desk [Blockfrost migration runbook](https://github.com/midn
 {/* _mod-docs-content-type: PROCEDURE */}
 ## Running a local network
 
-Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine with [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). The tool initializes a pre-funded genesis wallet and presents a funding menu, so you can deploy and transact within minutes, with no faucet and nothing at risk.
+Run the full Midnight stack, a node, an indexer, and a proof server, in Docker on your machine. The node runs the `dev` preset: a one-node chain whose genesis wallet holds the starting tNIGHT and already generates DUST, so you can deploy and transact within minutes, with no faucet and nothing at risk. The images are the ledger 9 versions from the [compatibility matrix](../relnotes/support-matrix): node 2.1.101, indexer 4.4.101, and proof server 9.0.0.
+
+:::note Don't use midnight-local-dev
+
+Earlier versions of this guide used [midnight-local-dev](https://github.com/midnightntwrk/midnight-local-dev). Midnight archived that repository, and its `standalone.yml` still runs ledger 8 images (node 1.0.0, indexer 4.3.3, proof server 8.1.0), which Midnight.js 5 and Wallet SDK 2 don't support. Node `2.1.0-rc.4`, which some example projects still pin, rejects contract calls with `Custom error: 104`.
+
+:::
 
 ### Procedure
 
-1. Clone the repository and install its dependencies:
+1. Save this Compose file as `compose.yml` in an empty directory:
+
+   ```yaml title="compose.yml"
+   name: midnight-local
+
+   services:
+     node:
+       image: 'midnightntwrk/midnight-node:2.1.101'
+       ports:
+         - '127.0.0.1:9944:9944'
+       environment:
+         CFG_PRESET: 'dev'
+         SIDECHAIN_BLOCK_BENEFICIARY: '04bcf7ad3be7a5c790460be82a713af570f22e0f801f6659ab8e84a52be6969e'
+       # Healthy once block 1 exists, so the indexer doesn't start on an empty chain.
+       healthcheck:
+         test:
+           - 'CMD-SHELL'
+           - >-
+             curl -sf -H 'Content-Type: application/json'
+             -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader","params":[]}'
+             http://localhost:9944 | grep -q '"number":"0x[1-9a-f]'
+         interval: 2s
+         timeout: 5s
+         retries: 30
+         start_period: 5s
+
+     indexer:
+       image: 'midnightntwrk/indexer-standalone:4.4.101'
+       restart: on-failure
+       ports:
+         - '127.0.0.1:8088:8088'
+       environment:
+         APP__INFRA__NODE__URL: 'ws://node:9944'
+         APP__APPLICATION__NETWORK_ID: 'undeployed'
+         APP__INFRA__STORAGE__PASSWORD: 'indexer'
+         APP__INFRA__PUB_SUB__PASSWORD: 'indexer'
+         APP__INFRA__LEDGER_STATE_STORAGE__PASSWORD: 'indexer'
+         APP__INFRA__SECRET: '303132333435363738393031323334353637383930313233343536373839303132'
+         APP__INFRA__SPO_NODE__URL: 'ws://node:9944'
+         APP__INFRA__SPO_NODE__BLOCKFROST_ID: 'local-dummy-id'
+       healthcheck:
+         test: ['CMD-SHELL', 'cat /var/run/indexer-standalone/running']
+         interval: 10s
+         timeout: 5s
+         retries: 20
+         start_period: 10s
+       depends_on:
+         node:
+           condition: service_healthy
+
+     proof-server:
+       image: 'midnightntwrk/proof-server:9.0.0'
+       command: ['midnight-proof-server', '-v']
+       ports:
+         - '127.0.0.1:6300:6300'
+       healthcheck:
+         test: ['CMD-SHELL', 'echo > /dev/tcp/127.0.0.1/6300']
+         interval: 10s
+         timeout: 5s
+         retries: 20
+         start_period: 10s
+   ```
+
+   The passwords and the secret only protect the indexer's own storage inside the container. The indexer needs a value for the Blockfrost ID, but the `dev` preset mocks its Cardano connection, so any string works.
+
+2. Start the network from that directory:
 
    ```bash
-   git clone https://github.com/midnightntwrk/midnight-local-dev.git
-   cd midnight-local-dev
-   npm install
+   docker compose up -d --wait
    ```
 
-2. Start the network:
+   The command pulls the images and returns once the node has produced its first block and the indexer and proof server are healthy, which takes under a minute after the first pull.
+
+3. Fund the wallet you develop with from the genesis wallet, whose seed is `00..01`. The [node toolkit](../nodes/node-toolkit) sends the transactions. Run it on the network's Docker network, `midnight-local_default`, so it reaches the node as `node`. Replace `$WALLET_SEED` with your test wallet's seed:
 
    ```bash
-   npm start
+   toolkit() { docker run --rm --network midnight-local_default midnightntwrk/midnight-node-toolkit:2.1.101 "$@"; }
+   ADDR=$(toolkit show-address --network undeployed --seed $WALLET_SEED --unshielded)
+
+   # Send 10,000 tNIGHT (10,000,000,000 STAR) from the genesis wallet.
+   toolkit generate-txs -s ws://node:9944 -d ws://node:9944 \
+     single-tx --source-seed 00..01 --unshielded-amount 10000000000 --destination-address $ADDR
+
+   # Wait for the new NIGHT to generate enough DUST to pay the registration fee,
+   # then register it for DUST generation.
+   sleep 30
+   toolkit generate-txs -s ws://node:9944 -d ws://node:9944 \
+     register-dust-address --wallet-seed $WALLET_SEED
    ```
 
-   The command pulls the Docker images (versions are pinned in `standalone.yml`), starts the node, indexer, and proof server with health checks, initializes the genesis master wallet that holds the pre-mined NIGHT, registers it for DUST so it can pay fees, and then presents the funding menu:
+   Each `generate-txs` command ends its log with `FINALIZED`. Check the DUST balance with `toolkit dust-balance -s ws://node:9944 --seed $WALLET_SEED`.
 
-   ```text
-   Choose an option:
-     [1] Fund accounts from config file (NIGHT + DUST registration)
-     [2] Fund accounts by public key (NIGHT transfer only)
-     [3] Display wallets
-     [4] Exit
-   ```
-
-3. Fund the wallets you develop with. Option `1` reads a JSON file of accounts (copy `accounts.example.json` to `accounts.json` and add your 24-word mnemonics), transfers tNIGHT to each, and registers each account for DUST generation. Option `2` transfers tNIGHT to Bech32m addresses you paste, and the recipients register for DUST themselves. Either way, each account receives 50,000 tNIGHT, up to 10 accounts per operation.
-
-4. If you only need the containers, skip the wallet tooling and use Docker Compose directly. In this mode you handle genesis funding and DUST registration yourself:
+4. Stop the network when you're done:
 
    ```bash
-   docker compose -f standalone.yml up -d    # start
-   docker compose -f standalone.yml ps       # status
-   docker compose -f standalone.yml logs -f  # logs
-   docker compose -f standalone.yml down     # stop
+   docker compose down
    ```
+
+   The chain lives only in the containers. The next `docker compose up` starts a new chain from the same genesis state, so deployed contracts and funded wallets are gone, and the genesis wallet is full again.
 
 ### Verification
 
-The local endpoints answer: the node reports the dev chain and serves its health check, the indexer serves blocks, and the proof server accepts connections.
+The local endpoints answer: the node serves its health check, the indexer serves blocks from a ledger 9 chain (a protocol version of 2000000 or higher), and the proof server reports ok.
 
 ```typescript title="local-network.test.ts"
 import { describe, it, expect } from 'vitest';
@@ -376,13 +447,14 @@ describe('local network', () => {
     expect(res.isSyncing).toBe(false);
   });
 
-  it('indexer serves blocks', async () => {
+  it('indexer serves ledger 9 blocks', async () => {
     const res = await fetch('http://localhost:8088/api/v4/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: '{ block { height } }' }),
+      body: JSON.stringify({ query: '{ block { height protocolVersion } }' }),
     }).then((r) => r.json());
     expect(res.data.block.height).toBeGreaterThan(0);
+    expect(res.data.block.protocolVersion).toBeGreaterThanOrEqual(2_000_000);
   });
 
   it('proof server reports ok', async () => {
@@ -394,7 +466,7 @@ describe('local network', () => {
 
 ```text
  ✓ local-network.test.ts > local network > node is healthy
- ✓ local-network.test.ts > local network > indexer serves blocks
+ ✓ local-network.test.ts > local network > indexer serves ledger 9 blocks
  ✓ local-network.test.ts > local network > proof server reports ok
 
  Test Files  1 passed (1)
@@ -408,10 +480,11 @@ The failure modes you are most likely to hit with the local stack, and their fix
 
 | Symptom | Fix |
 |---|---|
-| `Bind for 0.0.0.0:9944 failed: port is already allocated` | A previous run still holds the port. Run `docker compose -f standalone.yml down`, or find the holder with `lsof -i :9944`. |
-| Indexer exits on first start with `block number 1 not found` | A startup race on a fresh chain: the indexer asked for a block the node had not produced yet. Start it again with `docker start midnight-indexer`; it latches on once blocks exist. |
+| `Bind for 127.0.0.1:9944 failed: port is already allocated` | A previous run still holds the port. Run `docker compose down` in the directory with `compose.yml`, or find the holder with `lsof -i :9944`. |
+| Indexer exits on first start with `block number 1 not found` | A startup race on a fresh chain: the indexer asked for a block the node had not produced yet. The Compose file waits for block 1 and restarts the indexer on failure. If it still stops, run `docker compose restart indexer`; it latches on once blocks exist. |
 | `Operation failed: Expected undeployed address, got Preprod address` | The wallet is on the wrong network. In Lace, switch to the Undeployed network under **Settings**, then use that unshielded address. |
-| Containers do not start | Confirm Docker is running, then run `docker compose -f standalone.yml pull` and `up`, and read `docker compose -f standalone.yml logs -f` for the failing service. |
+| Containers do not start | Confirm Docker is running, then run `docker compose pull` and `docker compose up -d --wait`, and read `docker compose logs -f <service>` for the failing service. |
+| Contract calls fail with `1010: Invalid Transaction: Custom error: 104` | The node image is older than 2.1.101, for example `2.1.0-rc.4`. Use the images in the Compose file above. |
 | Wallet sync is slow after startup | The indexer is catching up with the node. Confirm the node produces blocks with `curl http://localhost:9944/health` and watch the indexer logs. |
 
 {/* _mod-docs-content-type: PROCEDURE */}
@@ -558,7 +631,7 @@ Every transaction on Midnight consumes DUST, and where the DUST comes from is th
 
 NIGHT is the native utility token; holding it is what entitles you to DUST. DUST is a shielded, non-transferable resource that fees are paid in. Registered NIGHT generates DUST over time up to a cap of about 5 DUST per NIGHT, refilling in roughly a week, so a funded wallet regenerates its capacity to transact rather than spending it away permanently. [Tokens on Midnight](../tokens/overview) introduces the model and [DUST architecture](../concepts/dust-architecture) covers generation, decay, and the protocol parameters.
 
-**On the local network**, the genesis wallet is pre-funded and already registered for DUST, and the funding menu transfers tNIGHT to your own test wallets. DUST generates in about 5 minutes. There is no faucet because none is needed; see [Running a local network](#running-a-local-network).
+**On the local network**, the genesis wallet is pre-funded and already generates DUST. Send tNIGHT from it to your own test wallets with the node toolkit, then register that tNIGHT for DUST generation. You don't need a faucet; see [Running a local network](#running-a-local-network).
 
 **On `preview` and `preprod`**, request free tNIGHT from the network's faucet (each request sends 5,000 tNIGHT; both faucets are rate limited), then register it for tDUST generation in your wallet. The [Funding a wallet](./acquire-tokens) guide walks through the faucet, the Lace **Generate tDUST** flow, and the scriptable wallet SDK path. Test tokens carry no real value.
 
@@ -646,7 +719,6 @@ Work through this list before a production launch. Each item links to the page t
 - [Environments and endpoints](../relnotes/network): the release-notes view of the per-network endpoints.
 - [Node endpoints](../nodes/node-endpoints): RPC quickstart, common queries, and the Insomnia collection.
 - [Blockfrost: Midnight endpoints and authentication](https://blockfrost.dev/start-building/midnight/): Blockfrost's reference for the Midnight Preprod and Mainnet indexer and RPC endpoints.
-- [midnight-local-dev on GitHub](https://github.com/midnightntwrk/midnight-local-dev): the local network tool, its pinned image versions, and its README.
 - [Using the Midnight node toolkit](../nodes/node-toolkit): inspect blocks and ledger parameters, and fund test wallets on a local network from the command line.
 - [Run the proof server](./run-proof-server): the local proof server every network setup depends on.
 - [Deploying and operating a contract](./deploy-and-operate): the complete providers object a DApp passes to the SDK, and what comes after deployment.
