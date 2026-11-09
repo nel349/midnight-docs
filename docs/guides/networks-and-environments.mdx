@@ -622,7 +622,7 @@ describe.each(networks)('$id', ({ id, chain, node, indexer, projectId }) => {
       Tests  9 passed (9)
 ```
 
-The `undeployed` network is not in the matrix because it only exists while your local containers run. With the [local network](#running-a-local-network) up, the same checks pass against `http://localhost:9944` and `http://localhost:8088/api/v4/graphql`.
+The `undeployed` network is not in the matrix because it only exists while your local containers run. With the [local network](#running-a-local-network) up, the node at `http://localhost:9944` answers `system_chain` with `undeployed1`, and the indexer at `http://localhost:8088/api/v4/graphql` serves blocks. [Running a local network](#running-a-local-network) has its own test.
 
 {/* _mod-docs-content-type: CONCEPT */}
 ## Funding and transaction cost
