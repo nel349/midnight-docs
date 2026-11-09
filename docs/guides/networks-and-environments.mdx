@@ -23,7 +23,7 @@ These apply to every procedure in this guide:
 
 - Node.js version 22 or higher installed.
 - Docker installed and running, for the local network and the [proof server](./run-proof-server).
-- [Vitest](https://vitest.dev/) and `@midnight-ntwrk/midnight-js-network-id` installed in your test workspace, for the verification tests.
+- [Vitest](https://vitest.dev/) and `@midnight-ntwrk/midnight-js-utils` 5.0.0 installed in your test workspace, for the verification tests.
 
 {/* _mod-docs-content-type: CONCEPT */}
 ## The Midnight networks
@@ -423,31 +423,21 @@ Point a DApp at a chosen network by setting the network ID and wiring the matchi
 
 1. Choose the target network using [Network selection at a glance](#network-selection-at-a-glance).
 
-2. Set the network ID before initializing any providers. Midnight.js reads this value when it normalizes addresses and builds transactions (the `deployContract` and `callTx` paths), so it must be set before any contract operation:
-
-   ```typescript
-   import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-
-   setNetworkId('preprod');
-
-   /** Supported network IDs: 'mainnet', 'preview', 'preprod', 'undeployed' */
-   ```
-
-   There is no default: `getNetworkId()` throws `Network ID has not been configured` until you call `setNetworkId`. The call stores the string as-is, so a misspelled network name does not fail here; it surfaces later, in the components that consume the ID.
-
-3. Keep the network ID and its endpoints together in one configuration object, using the values from the [Environment reference](#environment-reference). Note that the proof server URL stays local for every network. The `preprod` endpoints need a Blockfrost token, so this example builds them with the `preprodConfig()` helper from [Passing the token](#passing-the-token):
+2. Keep the network ID and its endpoints together in one configuration object, using the values from the [Environment reference](#environment-reference). Note that the proof server URL stays local for every network. The `preprod` endpoints need a Blockfrost token, so this example builds them with the `preprodConfig()` helper from [Passing the token](#passing-the-token):
 
    ```typescript
    import { preprodConfig } from './config.js';
 
    const NETWORKS = {
      undeployed: () => ({
+       networkId: 'undeployed',
        node: 'http://localhost:9944',
        indexer: 'http://localhost:8088/api/v4/graphql',
        indexerWS: 'ws://localhost:8088/api/v4/graphql/ws',
        proofServer: 'http://localhost:6300',
      }),
      preview: () => ({
+       networkId: 'preview',
        node: 'https://rpc.preview.midnight.network',
        indexer: 'https://indexer.preview.midnight.network/api/v4/graphql',
        indexerWS: 'wss://indexer.preview.midnight.network/api/v4/graphql/ws',
@@ -459,21 +449,29 @@ Point a DApp at a chosen network by setting the network ID and wiring the matchi
    const network = NETWORKS['preprod']();
    ```
 
-4. Pass the endpoints to your providers. The full providers object, including private state, ZK configuration, and wallet providers, is covered in [Configuring providers for a contract](./deploy-and-operate#configuring-providers-for-a-contract):
+3. Pass the network ID to Midnight.js in the `config` field of your provider set, together with `ttlSeconds`, how long a built transaction stays valid. Midnight.js 5 reads the network ID from `config` whenever it builds a transaction, such as when you deploy a contract with `deployContract` or call a circuit with `callTx`. Midnight.js 5.0.0 removed the `setNetworkId()` function and the `@midnight-ntwrk/midnight-js-network-id` package. Then pass the endpoints to your providers:
 
    ```typescript
+   import type { MidnightConfig } from '@midnight-ntwrk/midnight-js-types';
    import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 
-   const publicDataProvider = indexerPublicDataProvider(network.indexer, network.indexerWS);
+   const config: MidnightConfig = { networkId: network.networkId, ttlSeconds: 3600 };
+
+   const publicDataProvider = indexerPublicDataProvider({
+     queryURL: network.indexer,
+     subscriptionURL: network.indexerWS,
+   });
    ```
+
+   Add `config` and `publicDataProvider` to your provider set, next to the private state, ZK configuration, proof, and wallet providers. There is no default: deploying a contract or calling a circuit without `config` throws `ConfigurationError` (`providers.config is missing`) before anything is proven. `findDeployedContract` only reads the chain, so it succeeds without `config`, and the error appears at the first `callTx`. An empty network ID or a `ttlSeconds` that isn't a positive whole number throws `InvalidArgumentError`. Midnight.js checks the format of the network ID, not the name, so a misspelled network ID such as `prepod` passes this check. The wallet SDK takes the same network ID in its own configuration, as `networkId`.
 
 ### Verification
 
-Each network ID round-trips through the SDK, and the configured endpoints answer with the expected chain identity and a current block height. Blockfrost serves the `preprod` and `mainnet` endpoints, and each needs a token for its own network, so the test reads two variables: set `BLOCKFROST_PREPROD_PROJECT_ID` to your Midnight Preprod project token and `BLOCKFROST_MAINNET_PROJECT_ID` to your Midnight Mainnet project token; see [Getting a Blockfrost project token](#getting-a-blockfrost-project-token). The test skips the node and indexer checks of a network that has no token. Without either token, it reports `5 passed | 4 skipped`, so you can test `preview` without a Blockfrost account.
+Each network ID passes the check that Midnight.js runs on `providers.config`, and the configured endpoints answer with the expected chain identity and a current block height. Blockfrost serves the `preprod` and `mainnet` endpoints, and each needs a token for its own network, so the test reads two variables: set `BLOCKFROST_PREPROD_PROJECT_ID` to your Midnight Preprod project token and `BLOCKFROST_MAINNET_PROJECT_ID` to your Midnight Mainnet project token; see [Getting a Blockfrost project token](#getting-a-blockfrost-project-token). The test skips the node and indexer checks of a network that has no token. Without either token, it reports `5 passed | 4 skipped`, so you can test `preview` without a Blockfrost account.
 
 ```typescript title="networks.test.ts"
 import { describe, it, expect } from 'vitest';
-import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { assertValidMidnightConfig } from '@midnight-ntwrk/midnight-js-utils';
 
 const token = (name: string) => encodeURIComponent(process.env[name]?.trim() ?? '');
 const preprodToken = token('BLOCKFROST_PREPROD_PROJECT_ID');
@@ -520,9 +518,8 @@ describe.each(networks)('$id', ({ id, chain, node, indexer, projectId }) => {
   // The Blockfrost endpoints need a token; skip them when none is set.
   const noToken = projectId === '';
 
-  it('sets the network ID', () => {
-    setNetworkId(id);
-    expect(getNetworkId()).toBe(id);
+  it('passes the Midnight.js config check', () => {
+    expect(() => assertValidMidnightConfig({ networkId: id, ttlSeconds: 3600 })).not.toThrow();
   });
 
   it.skipIf(noToken)('reaches the node RPC', async () => {
@@ -538,13 +535,13 @@ describe.each(networks)('$id', ({ id, chain, node, indexer, projectId }) => {
 ```
 
 ```text
- ✓ networks.test.ts > 'preview' > sets the network ID
+ ✓ networks.test.ts > 'preview' > passes the Midnight.js config check
  ✓ networks.test.ts > 'preview' > reaches the node RPC
  ✓ networks.test.ts > 'preview' > reaches the indexer
- ✓ networks.test.ts > 'preprod' > sets the network ID
+ ✓ networks.test.ts > 'preprod' > passes the Midnight.js config check
  ✓ networks.test.ts > 'preprod' > reaches the node RPC
  ✓ networks.test.ts > 'preprod' > reaches the indexer
- ✓ networks.test.ts > 'mainnet' > sets the network ID
+ ✓ networks.test.ts > 'mainnet' > passes the Midnight.js config check
  ✓ networks.test.ts > 'mainnet' > reaches the node RPC
  ✓ networks.test.ts > 'mainnet' > reaches the indexer
 
@@ -586,15 +583,15 @@ Move a DApp that works on a test network to the production network. The mechanic
 
 3. Create a Blockfrost project for **Midnight Mainnet** and store its token server-side, as in [Getting a Blockfrost project token](#getting-a-blockfrost-project-token). The public mainnet indexer and RPC reject requests without it, and they reject the Midnight Preprod token you used on `preprod`.
 
-4. Point the configuration at mainnet. Set the network ID and build the endpoints with the `mainnetConfig()` helper from [Passing the token](#passing-the-token). The helper adds your token to the node, node WebSocket, indexer, and indexer WebSocket URLs; nothing else in the DApp changes:
+4. Point the configuration at mainnet. Build the endpoints with the `mainnetConfig()` helper from [Passing the token](#passing-the-token), and pass its network ID in the provider set's `config`. The helper adds your token to the node, node WebSocket, indexer, and indexer WebSocket URLs; nothing else in the DApp changes:
 
    ```typescript
-   import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+   import type { MidnightConfig } from '@midnight-ntwrk/midnight-js-types';
    import { mainnetConfig } from './config.js';
 
-   setNetworkId('mainnet');
-
    const network = mainnetConfig();
+
+   const config: MidnightConfig = { networkId: network.networkId, ttlSeconds: 3600 };
    ```
 
    Wire the providers as in [Configuring providers for a contract](./deploy-and-operate#configuring-providers-for-a-contract). If you are moving an existing mainnet DApp off the old Midnight-hosted endpoints, also work through [Migrating from the Midnight-hosted endpoints](#migrating-from-the-midnight-hosted-mainnet-endpoints).
@@ -612,13 +609,13 @@ BLOCKFROST_MAINNET_PROJECT_ID=<your Midnight Mainnet project ID> npx vitest run 
 ```
 
 ```text
- ↓ networks.test.ts > 'preview' > sets the network ID
+ ↓ networks.test.ts > 'preview' > passes the Midnight.js config check
  ↓ networks.test.ts > 'preview' > reaches the node RPC
  ↓ networks.test.ts > 'preview' > reaches the indexer
- ↓ networks.test.ts > 'preprod' > sets the network ID
+ ↓ networks.test.ts > 'preprod' > passes the Midnight.js config check
  ↓ networks.test.ts > 'preprod' > reaches the node RPC
  ↓ networks.test.ts > 'preprod' > reaches the indexer
- ✓ networks.test.ts > 'mainnet' > sets the network ID
+ ✓ networks.test.ts > 'mainnet' > passes the Midnight.js config check
  ✓ networks.test.ts > 'mainnet' > reaches the node RPC
  ✓ networks.test.ts > 'mainnet' > reaches the indexer
 
